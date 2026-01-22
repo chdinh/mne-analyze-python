@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mne-analyze-python"
+version = "0.1.0"
+description = "High-performance 3D brain viewer for MNE source estimation data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Christoph Dinh", email = "christoph.dinh@example.com" }
+]
+dependencies = [
+    "numpy",
+    "PySide6",
+    "pyrr",
+    "trimesh",
+    "requests",
+    "scipy",
+    "mne",
+    "nilearn",
+    "nibabel",
+    "rtree",
+    "wgpu>=0.29.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "vis", "app"]
