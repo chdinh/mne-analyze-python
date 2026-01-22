@@ -20,6 +20,12 @@ class WgpuViewport(QRenderWidget):
     
     Uses QRenderWidget for native Qt-WebGPU integration via rendercanvas.
     """
+    
+    # Signal emitted when hovered region changes
+    region_hovered = QtCore.Signal(str)
+    
+    # Signal emitted when frame changes (for slider sync)
+    frame_changed = QtCore.Signal(int)  # frame index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,6 +48,12 @@ class WgpuViewport(QRenderWidget):
         self.start_time = time.time()
         self.render_mode = "dynamic"  # "dynamic" or "atlas"
         self.show_traces = True
+        
+        # Playback control
+        self.is_playing = True
+        self.current_frame = 0
+        self.n_frames = 200  # Default, updated when data is loaded
+        self.paused_time = 0.0
         
         # Enable mouse tracking for smooth interaction
         self.setMouseTracking(True)
@@ -74,64 +86,104 @@ class WgpuViewport(QRenderWidget):
             self.region_names = brain_data.get("region_names", [])
             self.labels = brain_data.get("labels")
             self.vertices = brain_data.get("vertices")
+            # Set number of frames for playback
+            if self.color_frames is not None:
+                self.n_frames = self.color_frames.shape[1]
     
     def set_visualization_mode(self, mode):
         """Set visualization mode (0.0 = dynamic, 1.0 = atlas)."""
         self.render_mode = "atlas" if mode == 1.0 else "dynamic"
     
+    def set_playing(self, playing):
+        """Set playback state."""
+        if playing and not self.is_playing:
+            # Resuming - adjust start time to continue from current frame
+            self.start_time = time.time() - (self.current_frame / 30.0)
+        self.is_playing = playing
+    
+    def seek_to_position(self, position):
+        """Seek to a position (0.0 to 1.0)."""
+        if self.color_frames is not None:
+            self.current_frame = int(position * (self.n_frames - 1))
+            self.start_time = time.time() - (self.current_frame / 30.0)
+    
     def _get_hovered_region(self, mouse_x, mouse_y):
         """
         Perform simple raycasting to find the hovered brain region.
-        Returns the region name if found, None otherwise.
+        Returns a tuple (region_name, region_id) if found, (None, -1) otherwise.
         """
         if self.vertices is None or self.labels is None or self.camera is None:
-            return None
+            return (None, -1)
         
         # Get widget size
         width = self.width()
         height = self.height()
         if width == 0 or height == 0:
-            return None
+            return (None, -1)
         
-        # Convert mouse to NDC
-        ndc_x = (2.0 * mouse_x / width) - 1.0
-        ndc_y = 1.0 - (2.0 * mouse_y / height)
+        # Convert mouse to NDC (Qt mouse coords are in logical pixels)
+        # Match stc_viewer: ndc_x = (mx / l_w) * 2.0 - 1.0, ndc_y = -((my / l_h) * 2.0 - 1.0)
+        ndc_x = (mouse_x / width) * 2.0 - 1.0
+        ndc_y = -((mouse_y / height) * 2.0 - 1.0)  # Inverted Y
         
-        # Simple projected vertex picking (find closest vertex in screen space)
         import pyrr
         
         aspect = width / height
+        
+        # Create projection matrix
         projection = pyrr.matrix44.create_perspective_projection_matrix(45, aspect, 0.1, 1000.0)
         view = self.camera.get_view_matrix()
-        mvp = projection @ view
+        model_matrix = pyrr.matrix44.create_identity()
+        
+        # Correction matrix - MUST match renderer exactly!
+        correction = np.array([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.5, 1.0],
+        ], dtype=np.float32)
+        
+        # MVP construction - MUST match renderer: np.matmul(model, np.matmul(view, np.matmul(projection, correction)))
+        mvp = np.matmul(model_matrix, np.matmul(view, np.matmul(projection, correction)))
         
         # Transform all vertices to clip space
         vertices_homo = np.hstack([self.vertices, np.ones((len(self.vertices), 1), dtype=np.float32)])
-        clip_coords = (mvp @ vertices_homo.T).T
+        clip_coords = np.dot(vertices_homo, mvp)  # Row-vector multiplication
         
         # Perspective divide
-        w = clip_coords[:, 3:4]
+        w = clip_coords[:, 3:4].copy()
         w[w == 0] = 1e-10  # Avoid div by zero
         ndc_coords = clip_coords[:, :3] / w
         
-        # Filter vertices in front of camera (ndc_z in [-1, 1])
-        valid_mask = (ndc_coords[:, 2] >= -1) & (ndc_coords[:, 2] <= 1)
+        # Filter vertices in front of camera (ndc_z in [0, 1] after correction matrix)
+        # The correction matrix maps Z from [-1,1] to [0,1]
+        valid_mask = (ndc_coords[:, 2] >= 0) & (ndc_coords[:, 2] <= 1)
         
-        # Calculate screen distance
+        # Calculate screen distance (only X and Y)
         screen_dist = (ndc_coords[:, 0] - ndc_x) ** 2 + (ndc_coords[:, 1] - ndc_y) ** 2
         screen_dist[~valid_mask] = np.inf
         
-        closest_idx = np.argmin(screen_dist)
-        min_dist = screen_dist[closest_idx]
+        # Find candidates within distance threshold
+        threshold = 0.05  # NDC space threshold
+        within_threshold = screen_dist < threshold ** 2
         
-        # Threshold for "hovering" (in NDC space, roughly 20 pixels for 800px width)
-        threshold = 0.05
-        if min_dist < threshold ** 2:
-            label_id = int(self.labels[closest_idx])
-            if 0 <= label_id < len(self.region_names):
-                return self.region_names[label_id]
+        if not np.any(within_threshold):
+            return (None, -1)
         
-        return None
+        # Among candidates within threshold, pick the one closest to the camera (smallest Z = frontmost)
+        candidate_indices = np.where(within_threshold)[0]
+        candidate_z = ndc_coords[candidate_indices, 2]
+        
+        # Pick frontmost (smallest Z in NDC after correction = closest to camera)
+        frontmost_local_idx = np.argmin(candidate_z)
+        closest_idx = candidate_indices[frontmost_local_idx]
+        
+        label_id = int(self.labels[closest_idx])
+        # Check for valid label (non-negative and within bounds)
+        if label_id >= 0 and label_id < len(self.region_names):
+            return (self.region_names[label_id], label_id)
+        
+        return (None, -1)
 
     def _ensure_initialized(self):
         """Initialize WebGPU resources on first draw."""
@@ -193,11 +245,22 @@ class WgpuViewport(QRenderWidget):
             aspect = size[0] / size[1]
             
             # Update animation
-            elapsed = time.time() - self.start_time
-            frame_idx = 0
+            frame_idx = self.current_frame
             
             if self.render_mode == "dynamic" and self.color_frames is not None and self.renderer:
-                frame_idx = int(elapsed * 30) % self.color_frames.shape[1]
+                if self.is_playing:
+                    # Calculate frame from elapsed time
+                    elapsed = time.time() - self.start_time
+                    self.current_frame = int(elapsed * 30) % self.n_frames
+                    frame_idx = self.current_frame
+                    
+                    # Emit signal periodically (every 5 frames to reduce overhead)
+                    if frame_idx % 5 == 0:
+                        self.frame_changed.emit(frame_idx)
+                else:
+                    # Paused - use current_frame directly
+                    frame_idx = self.current_frame
+                
                 current_colors = self.color_frames[:, frame_idx, :]
                 self.renderer.update_colors(current_colors)
             
@@ -283,12 +346,21 @@ class WgpuViewport(QRenderWidget):
             })
         
         # Hover detection for region labels
-        region = self._get_hovered_region(event.position().x(), event.position().y())
+        region_name, region_id = self._get_hovered_region(event.position().x(), event.position().y())
+        
+        # Update text renderer with region name
         if self.text_renderer:
-            if region:
-                self.text_renderer.set_text(region)
+            if region_name:
+                self.text_renderer.set_text(region_name)
             else:
-                self.text_renderer.set_text("MNE Analyze")
+                self.text_renderer.set_text("")
+        
+        # Update brain renderer with hovered region ID for visual highlighting
+        if self.renderer:
+            self.renderer.set_hovered_id(region_id)
+        
+        # Emit signal for control panel
+        self.region_hovered.emit(region_name if region_name else "None")
         
         super().mouseMoveEvent(event)
 

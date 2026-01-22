@@ -165,7 +165,8 @@ class TextRenderer:
         )
 
     def draw(self, target_view):
-        if not self.bind_group or not self.texture:
+        # Skip drawing if no text or empty text
+        if not self.current_text or not self.bind_group or not self.texture:
             return
         
         # Dynamic format adaptation

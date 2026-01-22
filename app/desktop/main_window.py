@@ -84,6 +84,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.controls.mode_changed.connect(self._on_mode_changed)
         self.controls.traces_toggled.connect(self._on_traces_toggled)
         self.playback.play_toggled.connect(self._on_play_toggled)
+        self.playback.time_changed.connect(self._on_time_changed)
+        self.viewport.region_hovered.connect(self.controls.set_hovered_region)
+        self.viewport.frame_changed.connect(self._on_frame_changed)
 
     def _load_data(self):
         """Load brain data (blocking for now)."""
@@ -135,6 +138,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.viewport.set_text_renderer(self.text_renderer)
         self.viewport.set_brain_data(self.brain_data)
         
+        # Set slider range based on number of frames
+        if self.viewport.n_frames > 1:
+            self.playback.slider.setRange(0, 100)
+        
         print("Renderers initialized successfully!")
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -162,6 +169,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_play_toggled(self, playing):
         """Handle play/pause toggle."""
         self.state.is_playing = playing
+        self.viewport.set_playing(playing)
+    
+    def _on_time_changed(self, position):
+        """Handle timeline slider change."""
+        self.viewport.seek_to_position(position)
+    
+    def _on_frame_changed(self, frame_idx):
+        """Handle frame change from viewport (update slider)."""
+        if self.viewport.n_frames > 1:
+            # Block signals to prevent feedback loop
+            self.playback.slider.blockSignals(True)
+            slider_val = int((frame_idx / (self.viewport.n_frames - 1)) * 100)
+            self.playback.slider.setValue(slider_val)
+            self.playback.slider.blockSignals(False)
 
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts."""
@@ -171,18 +192,21 @@ class MainWindow(QtWidgets.QMainWindow):
             # Toggle visualization mode
             new_mode = 1 if self.state.visualization_mode == 0 else 0
             self._on_mode_changed(new_mode)
-            self.controls.mode_combo.setCurrentIndex(new_mode)
+            if new_mode == 0:
+                self.controls.radio_electric.setChecked(True)
+            else:
+                self.controls.radio_atlas.setChecked(True)
 
         elif key == QtCore.Qt.Key_P:
             # Toggle butterfly plot
             self.state.show_traces = not self.state.show_traces
-            self.controls.traces_checkbox.setChecked(self.state.show_traces)
+            self.controls.check_traces.setChecked(self.state.show_traces)
             self.viewport.show_traces = self.state.show_traces
 
         elif key == QtCore.Qt.Key_Space:
             # Toggle play/pause
             self.state.is_playing = not self.state.is_playing
-            self.playback.play_button.setChecked(self.state.is_playing)
+            self.playback.btn_play.setChecked(self.state.is_playing)
 
         else:
             super().keyPressEvent(event)
