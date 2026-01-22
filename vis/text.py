@@ -74,8 +74,8 @@ class TextRenderer:
         
         self._create_pipeline()
         
-        # Initialize with empty text
-        self.set_text("Initializing...")
+        # Initialize with app name
+        self.set_text("MNE Analyze")
 
     def _create_pipeline(self):
         self.bind_group_layout = self.device.create_bind_group_layout(entries=[
@@ -167,6 +167,11 @@ class TextRenderer:
     def draw(self, target_view):
         if not self.bind_group or not self.texture:
             return
+        
+        # Dynamic format adaptation
+        if target_view.texture.format != self.render_format:
+            self.render_format = target_view.texture.format
+            self._create_pipeline()
             
         encoder = self.device.create_command_encoder()
         pass_enc = encoder.begin_render_pass(

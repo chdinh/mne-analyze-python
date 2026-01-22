@@ -1,7 +1,7 @@
 """
 MNE Analyze Python - Main Window
 
-PySide6 main window with embedded WebGPU brain viewer.
+PySide6 main window with embedded WebGPU brain viewer using QRenderWidget.
 """
 
 import time
@@ -38,7 +38,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trace_renderer = None
         self.text_renderer = None
         self.camera = None
-        self.start_time = time.time()
 
         # Build UI
         self._setup_ui()
@@ -49,11 +48,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Load data and initialize rendering
         self._load_data()
 
-        # Animation timer
-        self.timer = QtCore.QTimer()
-        self.timer.setInterval(16)  # ~60 FPS
-        self.timer.timeout.connect(self._game_loop)
-
     def _setup_ui(self):
         """Create the UI layout."""
         # Central widget
@@ -62,12 +56,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_layout = QtWidgets.QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Viewport (main rendering area)
+        # Viewport (main rendering area) - using QRenderWidget
         self.viewport = WgpuViewport()
         self.viewport.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding,
             QtWidgets.QSizePolicy.Expanding
         )
+        self.viewport.setMinimumSize(400, 300)
 
         # Playback controls (bottom)
         self.playback = PlaybackControls()
@@ -104,64 +99,43 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(100, self._init_rendering)
 
     def _init_rendering(self):
-        """Initialize renderers after viewport is initialized."""
-        if not self.viewport.initialized:
-            # Force initialization
-            self.viewport.initializeWebGPU()
-            self.viewport.initialized = True
-
+        """Initialize renderers after viewport has initialized WebGPU."""
+        # Wait for viewport to initialize WebGPU
+        if not self.viewport._initialized:
+            # Force initialization by triggering a draw
+            self.viewport._ensure_initialized()
+        
         device = self.viewport.device
         if not device:
-            print("Error: WebGPU device not available")
+            print("Error: WebGPU device not available, retrying...")
+            QtCore.QTimer.singleShot(200, self._init_rendering)
             return
 
+        print("Initializing renderers...")
+        
         # Create renderers using viewport's device
         self.brain_renderer = BrainRenderer(device, self.brain_data, None)
 
-        # Note: TraceRenderer and TextRenderer need the same render format
-        # For offscreen we use rgba8unorm
-        self.trace_renderer = TraceRenderer(device, "rgba8unorm")
+        # Get render format from viewport
+        render_format = self.viewport._render_format or "bgra8unorm"
+        
+        # Create overlay renderers
+        self.trace_renderer = TraceRenderer(device, render_format)
         self.trace_renderer.set_data(self.brain_data.get("traces", []))
 
-        self.text_renderer = TextRenderer(device, "rgba8unorm")
+        self.text_renderer = TextRenderer(device, render_format)
 
-        # Camera
-        self.camera = Camera(self.viewport)
+        # Camera (no canvas reference needed - viewport handles redraws)
+        self.camera = Camera(None)
+        
+        # Connect everything to the viewport
         self.viewport.set_camera(self.camera)
         self.viewport.set_renderer(self.brain_renderer)
-
-        # Start animation
-        self.timer.start()
-        self.viewport.update()
-
-    def _game_loop(self):
-        """Animation loop called by timer."""
-        if not self.brain_renderer:
-            return
-
-        # Update animation state
-        self._update_animation()
-
-        # Trigger repaint
-        self.viewport.update()
-
-    def _update_animation(self):
-        """Update animation colors for dynamic mode."""
-        if self.state.visualization_mode == 0.0:  # Dynamic mode
-            color_frames = self.brain_data.get("color_frames")
-            if color_frames is not None:
-                frame_idx = self._get_current_frame_idx()
-                current_colors = color_frames[:, frame_idx, :]
-                self.brain_renderer.update_colors(current_colors)
-
-    def _get_current_frame_idx(self):
-        """Get current animation frame index."""
-        elapsed = time.time() - self.start_time
-        color_frames = self.brain_data.get("color_frames")
-        if color_frames is None:
-            return 0
-        total = color_frames.shape[1]
-        return int(elapsed * 30) % total
+        self.viewport.set_trace_renderer(self.trace_renderer)
+        self.viewport.set_text_renderer(self.text_renderer)
+        self.viewport.set_brain_data(self.brain_data)
+        
+        print("Renderers initialized successfully!")
 
     # ─────────────────────────────────────────────────────────────────────────
     # UI Event Handlers
@@ -176,10 +150,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 atlas = self.brain_data.get("atlas_colors")
                 if atlas is not None:
                     self.brain_renderer.update_colors(atlas)
+        
+        # Update viewport mode
+        self.viewport.set_visualization_mode(self.state.visualization_mode)
 
     def _on_traces_toggled(self, enabled):
         """Handle trace overlay toggle."""
         self.state.show_traces = enabled
+        self.viewport.show_traces = enabled
 
     def _on_play_toggled(self, playing):
         """Handle play/pause toggle."""
@@ -199,6 +177,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Toggle butterfly plot
             self.state.show_traces = not self.state.show_traces
             self.controls.traces_checkbox.setChecked(self.state.show_traces)
+            self.viewport.show_traces = self.state.show_traces
 
         elif key == QtCore.Qt.Key_Space:
             # Toggle play/pause

@@ -24,6 +24,7 @@ dependencies = [
     "nibabel",
     "rtree",
     "wgpu>=0.29.0",
+    "rendercanvas>=1.0.0",
 ]
 
 [project.optional-dependencies]

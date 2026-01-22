@@ -78,6 +78,19 @@ class BrainRenderer:
         """Update geometry data completely."""
         self._init_geometry(data)
 
+    def ensure_format(self, target_format):
+        """
+        Ensure pipelines are created for the given format.
+        Recreates pipelines if format has changed.
+        
+        Args:
+            target_format: The texture format to use (e.g., 'bgra8unorm-srgb').
+        """
+        if target_format != self.current_format:
+            print(f"Recreating pipelines for format: {target_format}")
+            self.current_format = target_format
+            self._create_pipelines(target_format)
+
     def _init_geometry(self, data):
         """
         Initialize Vertex and Index buffers from data dictionary.
