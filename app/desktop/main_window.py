@@ -16,6 +16,7 @@ from vis.camera import Camera
 from vis.text import TextRenderer
 from .viewport import WgpuViewport
 from .widgets import AppControls, PlaybackControls
+from .channel_browser import ChannelBrowser
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -38,6 +39,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trace_renderer = None
         self.text_renderer = None
         self.camera = None
+        self.channel_browser = None
 
         # Build UI
         self._setup_ui()
@@ -56,6 +58,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_layout = QtWidgets.QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Tab Widget
+        self.tabs = QtWidgets.QTabWidget()
+        self.main_layout.addWidget(self.tabs)
+
+        # --- Tab 1: Brain View ---
+        self.brain_container = QtWidgets.QWidget()
+        self.brain_layout = QtWidgets.QVBoxLayout(self.brain_container)
+        self.brain_layout.setContentsMargins(0, 0, 0, 0)
+
         # Viewport (main rendering area) - using QRenderWidget
         self.viewport = WgpuViewport()
         self.viewport.setSizePolicy(
@@ -64,20 +75,26 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.viewport.setMinimumSize(400, 300)
 
-        # Playback controls (bottom)
+        # Playback controls (bottom of brain view)
         self.playback = PlaybackControls()
 
-        self.main_layout.addWidget(self.viewport, stretch=1)
-        self.main_layout.addWidget(self.playback, stretch=0)
+        self.brain_layout.addWidget(self.viewport, stretch=1)
+        self.brain_layout.addWidget(self.playback, stretch=0)
 
-        # Sidebar dock
+        self.tabs.addTab(self.brain_container, "Brain View")
+
+        # --- Tab 2: Raw Browser ---
+        self.channel_browser = ChannelBrowser()
+        self.tabs.addTab(self.channel_browser, "Raw Browser")
+
+        # Sidebar dock (Controls) - Moved to LEFT
         self.dock = QtWidgets.QDockWidget("Controls", self)
         self.dock.setAllowedAreas(
             QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea
         )
         self.controls = AppControls()
         self.dock.setWidget(self.controls)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.dock)
+        self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.dock)
 
     def _connect_signals(self):
         """Connect UI signals to slots."""
@@ -87,6 +104,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.playback.time_changed.connect(self._on_time_changed)
         self.viewport.region_hovered.connect(self.controls.set_hovered_region)
         self.viewport.frame_changed.connect(self._on_frame_changed)
+        
+        # Connect File Browser
+
+        # Connect Subject Configuration
+        self.controls.recording_changed.connect(self._load_recording)
+        self.controls.surface_changed.connect(self._load_surface)
+        self.controls.atlas_changed.connect(self._load_atlas)
 
     def _load_data(self):
         """Load brain data (blocking for now)."""
@@ -143,6 +167,34 @@ class MainWindow(QtWidgets.QMainWindow):
             self.playback.slider.setRange(0, 100)
         
         print("Renderers initialized successfully!")
+
+    def _on_file_selected(self, path):
+        """Handle file selection from sidebar."""
+        if path.endswith('.fif') or path.endswith('.fif.gz'):
+             self.channel_browser.load_raw(path)
+             # Switch to browser tab (index 1)
+             self.tabs.setCurrentIndex(1)
+
+    def _load_recording(self, path):
+        """Load recording from subject config."""
+        print(f"Subject Config: Loading recording {path}")
+        self.channel_browser.load_raw(path)
+        # Update renderer if needed or just browser
+        self.tabs.setCurrentIndex(1)
+
+    def _load_surface(self, path):
+        """Load surface from subject config."""
+        print(f"Subject Config: Loading surface {path}")
+        # Placeholder: This would trigger a brain data reload
+        # self.brain_data = load_brain_data(surface_path=path)
+        # self.brain_renderer.update_data(self.brain_data)
+
+    def _load_atlas(self, path):
+        """Load atlas from subject config."""
+        print(f"Subject Config: Loading atlas {path}")
+        # Placeholder: This would trigger an atlas reload
+        # self.brain_data.load_atlas(path)
+        # self.brain_renderer.update_colors(...)
 
     # ─────────────────────────────────────────────────────────────────────────
     # UI Event Handlers
