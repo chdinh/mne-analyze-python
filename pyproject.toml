@@ -25,6 +25,7 @@ dependencies = [
     "rtree",
     "wgpu>=0.29.0",
     "rendercanvas>=1.0.0",
+    "mne-qt-browser",
 ]
 
 [project.optional-dependencies]

@@ -44,57 +44,54 @@ class ChannelBrowser(QtWidgets.QWidget):
 
             print(f"Loading raw file: {file_path}")
             self.raw = mne.io.read_raw_fif(file_path, preload=False)
+
+            # Clean up previous browser/canvas
+            # If we had a matplotlib canvas
+            if self.canvas:
+                self.layout.removeWidget(self.canvas)
+                self.canvas.deleteLater()
+                self.canvas = None
             
-            # Create plot
-            # MNE plot returning a figure. 
-            # Note: For efficient browsing, MNE usually opens a new window in 'qt' mode.
-            # To embed, we need to ask MNE to plot to a specific figure or capture it.
-            # However, mne.Viz raw.plot usually returns a Figure object if show=False.
-            # Let's try standard matplotlib embedding.
+            # If we had a toolbar
+            if self.toolbar:
+                self.layout.removeWidget(self.toolbar)
+                self.toolbar.deleteLater()
+                self.toolbar = None
             
-            # We use the 'agg' backend for MNE to ensure it generates a Figure we can embed, 
-            # but usually we need 'qtagg' for interactivity in Qt.
-            # MNE's raw.plot is complex. 
-            
-            # Option 1: Use mne.viz.plot_raw with show=False
-            fig = self.raw.plot(show=False, block=False, duration=10.0, start=0.0)
-            
-            # The returned object from raw.plot depends on the backend.
-            # If using 'matplotlib' backend: returns matplotlib.figure.Figure
-            # If using 'qt' backend (mne-qt-browser): returns a specific browser instance.
-            
-            # We assume default matplotlib backend for now as per plan.
-            self.figure = fig
+            # Try to use mne-qt-browser
+            try:
+                mne.viz.set_browser_backend("qt")
+            except ImportError:
+                 print("mne-qt-browser not found, falling back to matplotlib")
+                 mne.viz.set_browser_backend("matplotlib")
+
+            # Plot - returns the browser widget (if qt) or Figure (if mpl)
+            # We don't pass 'fig' here as per the error fix.
+            self.browser_view = self.raw.plot(show=False, block=False)
             
             # Embed
-            # Note: If fig is already a MNEQtBrowser, we might need different handling.
-            # Assuming it is a matplotlib figure:
-            if hasattr(fig, 'canvas'):
-                # It might already have a canvas, or we need to put it in a FigureCanvasQTAgg
-                # If it's a standard MP figure, we wrap it.
-                if isinstance(fig, Figure):
-                     self.canvas = FigureCanvasQTAgg(fig)
-                else:
-                    # It might be the mne-qt-browser widget itself or similar
-                    # Check if it is a widget
-                    if isinstance(fig, QtWidgets.QWidget):
-                        self.canvas = fig
-                    elif hasattr(fig, 'canvas') and isinstance(fig.canvas, QtWidgets.QWidget):
-                         self.canvas = fig.canvas
-                    else:
-                        # Fallback for standard matplotlib figure that needs a canvas
-                        self.canvas = FigureCanvasQTAgg(fig)
-            else:
-                 self.canvas = FigureCanvasQTAgg(fig)
-
-            self.layout.addWidget(self.canvas)
+            if isinstance(self.browser_view, QtWidgets.QWidget):
+                # If it's a QMainWindow (which MNE Qt Browser is), we need to handle it carefully
+                # so it can be embedded in a layout.
+                self.browser_view.setWindowFlags(QtCore.Qt.Widget)
+                self.layout.addWidget(self.browser_view)
+                self.canvas = self.browser_view # Keep ref
             
-            # Create and add toolbar using the canvas
-            if isinstance(self.canvas, FigureCanvasQTAgg):
-                 self.toolbar = NavigationToolbar(self.canvas, self)
-                 self.layout.addWidget(self.toolbar)
+            elif hasattr(self.browser_view, 'canvas') and isinstance(self.browser_view.canvas, QtWidgets.QWidget):
+                # Matplotlib Figure
+                self.canvas = FigureCanvasQTAgg(self.browser_view)
+                self.layout.addWidget(self.canvas)
+                self.toolbar = NavigationToolbar(self.canvas, self)
+                self.layout.addWidget(self.toolbar)
+                self.canvas.draw()
+            else:
+                print(f"Unknown browser return type: {type(self.browser_view)}")
+            
+            # Focus logic
+            if self.canvas:
+                self.canvas.setFocusPolicy(QtCore.Qt.StrongFocus)
+                self.canvas.setFocus()
 
-            self.canvas.draw()
             
         except Exception as e:
             print(f"Error loading raw file: {e}")

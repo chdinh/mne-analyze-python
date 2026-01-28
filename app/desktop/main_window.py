@@ -17,6 +17,8 @@ from vis.text import TextRenderer
 from .viewport import WgpuViewport
 from .widgets import AppControls, PlaybackControls
 from .channel_browser import ChannelBrowser
+from .stc_browser import StcBrowser
+from .source_traces import SourceTracesWidget
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -87,6 +89,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.channel_browser = ChannelBrowser()
         self.tabs.addTab(self.channel_browser, "Raw Browser")
 
+        # --- Tab 3: Source Traces ---
+        self.source_traces = SourceTracesWidget()
+        self.tabs.addTab(self.source_traces, "Source Traces")
+
         # Sidebar dock (Controls) - Moved to LEFT
         self.dock = QtWidgets.QDockWidget("Controls", self)
         self.dock.setAllowedAreas(
@@ -111,6 +117,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.controls.recording_changed.connect(self._load_recording)
         self.controls.surface_changed.connect(self._load_surface)
         self.controls.atlas_changed.connect(self._load_atlas)
+        self.controls.stc_lh_changed.connect(lambda p: self._load_stc(p, 'lh'))
+        self.controls.stc_rh_changed.connect(lambda p: self._load_stc(p, 'rh'))
 
     def _load_data(self):
         """Load brain data (blocking for now)."""
@@ -195,6 +203,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # Placeholder: This would trigger an atlas reload
         # self.brain_data.load_atlas(path)
         # self.brain_renderer.update_colors(...)
+
+    def _load_stc(self, path, hemi):
+        """Load source estimate for a specific hemisphere."""
+        print(f"Subject Config: Loading STC ({hemi}) {path}")
+        if hemi == 'lh':
+            self.source_traces.load_lh(path)
+        else:
+            self.source_traces.load_rh(path)
+        self.tabs.setCurrentIndex(2) # Switch to Source Traces tab
 
     # ─────────────────────────────────────────────────────────────────────────
     # UI Event Handlers

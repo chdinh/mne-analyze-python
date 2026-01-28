@@ -57,6 +57,8 @@ class SubjectConfigWidget(QtWidgets.QGroupBox):
     recording_changed = QtCore.Signal(str)
     surface_changed = QtCore.Signal(str)
     atlas_changed = QtCore.Signal(str)
+    stc_lh_changed = QtCore.Signal(str)
+    stc_rh_changed = QtCore.Signal(str)
 
     def __init__(self, parent=None):
         super().__init__("Subject Configuration", parent)
@@ -71,12 +73,23 @@ class SubjectConfigWidget(QtWidgets.QGroupBox):
         self.item_surface.file_selected.connect(self.surface_changed.emit)
         
         # Atlas
+        # Atlas
         self.item_atlas = SubjectConfigItem("Atlas", "Label Files (*.nii *.nii.gz *.mgz *.label)")
         self.item_atlas.file_selected.connect(self.atlas_changed.emit)
+        
+        # Source Estimate LH
+        self.item_stc_lh = SubjectConfigItem("Source (LH)", "STC Files (*-lh.stc *-stc.h5 *_stc.h5);;All Files (*)")
+        self.item_stc_lh.file_selected.connect(self.stc_lh_changed.emit)
+        
+        # Source Estimate RH
+        self.item_stc_rh = SubjectConfigItem("Source (RH)", "STC Files (*-rh.stc *-stc.h5 *_stc.h5);;All Files (*)")
+        self.item_stc_rh.file_selected.connect(self.stc_rh_changed.emit)
         
         layout.addWidget(self.item_recording)
         layout.addWidget(self.item_surface)
         layout.addWidget(self.item_atlas)
+        layout.addWidget(self.item_stc_lh)
+        layout.addWidget(self.item_stc_rh)
 
 class FileBrowserWidget(QtWidgets.QWidget):
     """
@@ -156,6 +169,8 @@ class AppControls(QtWidgets.QWidget):
     recording_changed = QtCore.Signal(str)
     surface_changed = QtCore.Signal(str)
     atlas_changed = QtCore.Signal(str)
+    stc_lh_changed = QtCore.Signal(str)
+    stc_rh_changed = QtCore.Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -166,6 +181,8 @@ class AppControls(QtWidgets.QWidget):
         self.subject_config.recording_changed.connect(self.recording_changed.emit)
         self.subject_config.surface_changed.connect(self.surface_changed.emit)
         self.subject_config.atlas_changed.connect(self.atlas_changed.emit)
+        self.subject_config.stc_lh_changed.connect(self.stc_lh_changed.emit)
+        self.subject_config.stc_rh_changed.connect(self.stc_rh_changed.emit)
         
         # Section 1: Visibility
         grp_vis = QtWidgets.QGroupBox("Visualization")
